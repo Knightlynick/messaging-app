@@ -1,0 +1,7 @@
+{
+    "files.associations": {
+        "type_traits": "cpp",
+        "mutex": "cpp"
+    },
+    "cmake.sourceDirectory": "D:/Dev/School/SE3313/messaging-app/server"
+}

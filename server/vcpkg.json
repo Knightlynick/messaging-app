@@ -1,0 +1,10 @@
+{
+  "name": "messaging-app-server",
+  "version-string": "1.0.0",
+  "dependencies": [
+    "boost-system",
+    "boost-thread",
+    "boost-asio",
+    "fmt"
+  ]
+}
