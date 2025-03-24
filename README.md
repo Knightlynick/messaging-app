@@ -18,7 +18,7 @@ installed.
         Click the path variable
         Edit
         Add the path C:\Windows\System32\WindowsPowerShell\v1.0
-        Click ok out
+        Click ok all the way out out
         Restart visual studio
 
 ## Setup Instructions
@@ -27,7 +27,7 @@ Follow these steps to set up the project on your machine:
 
 1. **Clone the Repository:**
 
-   git clone https://your.repo.url/messaging-app.git
+   git clone https://github.com/Knightlynick/messaging-app.git
 
 2. **Set up the Backend**
 
