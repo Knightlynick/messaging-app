@@ -31,13 +31,13 @@ Follow these steps to set up the project on your machine:
 
 2. **Set up the Backend**
 
-   cd messaging-app/server
+   cd server
    setup.bat
    You can begin writing code
   
 3. **Set up the Frontend**
 
-   cd messaging-app/client
+   cd client
    npm install
    You can begin writing code
 
@@ -45,16 +45,16 @@ Follow these steps to set up the project on your machine:
 
 1. **FRONTEND**
 
-    cd messaging-app/client
+    cd client
     npm start
     
 This starts up the frontend
 
 2. **BACKEND**
 
-    cd messaging-app/server/build
+    cd server/build
     cmake --build .
-    cd messaging-app/server/build/src/debug/
+    cd server/build/src/debug
     .\MessagingApp.exe
 
 This starts up the backend
