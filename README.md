@@ -1,60 +1,44 @@
 # Messaging-App
 
-This is how to install and swt everything up for our Messaging-App project, implemented in C++ with Boost.Asio, and react in javascript. It uses CMake for building and [vcpkg](https://github.com/microsoft/vcpkg) for dependency management for the backend, and node for frontend building and dependency management.  Below are instuctions for how to set up both.
-
-## Prerequisites
-
-Before setting up the project, ensure that you have the following installed:
-- **Git:** [Download Git](https://git-scm.com/downloads)
-- **CMake:** [Download CMake](https://cmake.org/download/)
-- **Visual Studio 2019/2022 or Build Tools for Visual Studio:** Ensure you have the "Desktop development with C++" workload 
-installed.
--**Microsoft Powershell** Ensure its added and part of the path variable: C:\Windows\System32\WindowsPowerShell\v1.0
-    - If not follow these instructions
-        windows + x 
-        system
-        advanced system settings
-        environment variables
-        Click the path variable
-        Edit
-        Add the path C:\Windows\System32\WindowsPowerShell\v1.0
-        Click ok all the way out out
-        Restart visual studio
+This is a simple guide to set up and run the Messaging-App project on a Linux environment.
 
 ## Setup Instructions
 
-Follow these steps to set up the project on your machine:
-
-1. **Clone the Repository:**
-
-   git clone https://github.com/Knightlynick/messaging-app.git
-
-2. **Set up the Backend**
-
-   cd server
-   setup.bat
-   You can begin writing code
-  
-3. **Set up the Frontend**
-
+### Frontend
+1. Navigate to the `client` folder:
+   ```bash
    cd client
+   ```
+2. Install dependencies:
+   ```bash
    npm install
-   You can begin writing code
+   ```
+3. Start the frontend:
+   ```bash
+   npm start
+   ```
 
-## Running Instructions
+### Backend
+1. Navigate to the `server` folder:
+   ```bash
+   cd server
+   ```
+2. Setup Backend:
+   ```bash
+   ./setup.sh
+   ```
+   This set up the backend, install any dependencies onto the pc, as well as get the build folder set up.  Make changes inside the src folder inside of server, not build
 
-1. **FRONTEND**
-
-    cd client
-    npm start
-    
-This starts up the frontend
-
-2. **BACKEND**
-
-    cd server/build
+3. Build Backend.
+    ```bash
+    cd build
     cmake --build .
-    cd server/build/src/debug
-    .\MessagingApp.exe
+    ```
 
-This starts up the backend
+    Make sure you are in the build folder, this will build the backend
+
+4. Run Backend
+    cd ..
+    ./start.sh
+
+    This will start the backend on a local ip, on the port 12345

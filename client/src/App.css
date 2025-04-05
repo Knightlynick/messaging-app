@@ -1,5 +1,12 @@
 .App {
-  text-align: center;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 20px;
+  box-sizing: border-box;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
 }
 
 .App-logo {
@@ -15,13 +22,172 @@
 
 .App-header {
   background-color: #282c34;
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  font-size: calc(10px + 2vmin);
+  border-radius: 8px 8px 0 0;
+  padding: 10px 0;
+  border-bottom: 1px solid #eee;
+  margin-bottom: 20px;
   color: white;
+}
+
+.App-header h1 {
+  margin: 0 0 10px 0;
+  font-size: 1.5rem;
+  color: #333;
+}
+
+.connection-status {
+  margin-top: 5px;
+  font-size: 0.9rem;
+  display: flex;
+  align-items: center;
+  color: #555;
+}
+
+.connection-status::before {
+  content: '';
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 8px;
+  background-color: red;
+}
+
+.App-header .connection-status::before {
+  background-color: green;
+}
+
+.error-message {
+  margin-left: 10px;
+  color: #d32f2f;
+  display: flex;
+  align-items: center;
+}
+
+.error-message button {
+  margin-left: 10px;
+  padding: 5px 10px;
+  background-color: #d32f2f;
+  color: white;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.server-config {
+  display: flex;
+  margin-bottom: 20px;
+  padding: 15px;
+  background-color: #f5f5f5;
+  border-radius: 5px;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.server-inputs {
+  display: flex;
+  gap: 15px;
+}
+
+.server-inputs label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.server-inputs input {
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  width: 150px;
+}
+
+.server-config button {
+  padding: 8px 15px;
+  background-color: #4caf50;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.server-config button:disabled {
+  background-color: #a5d6a7;
+  cursor: not-allowed;
+}
+
+.message-container {
+  flex: 1;
+  overflow-y: auto;
+  margin-bottom: 20px;
+  padding: 15px;
+  border: 1px solid #eee;
+  border-radius: 5px;
+  background-color: #f9f9f9;
+}
+
+.empty-message {
+  color: #999;
+  text-align: center;
+  padding: 20px;
+}
+
+.message {
+  margin-bottom: 10px;
+  padding: 10px;
+  border-radius: 4px;
+  background-color: white;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  word-break: break-word;
+}
+
+.system-message {
+  background-color: #e8f5e9;
+  color: #2e7d32;
+  border-left: 3px solid #2e7d32;
+}
+
+.join-leave {
+  background-color: #e3f2fd;
+  color: #1565c0;
+  border-left: 3px solid #1565c0;
+}
+
+.input-area {
+  display: flex;
+  gap: 10px;
+  border-radius: 0 0 8px 8px;
+  overflow: hidden;
+  background-color: #fff;
+  border: 1px solid #ddd;
+}
+
+.input-area input {
+  flex: 1;
+  padding: 12px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 16px;
+}
+
+.input-area button {
+  padding: 0 20px;
+  background-color: #2196f3;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 16px;
+  transition: background-color 0.2s;
+}
+
+.input-area button:disabled {
+  background-color: #90caf9;
+  cursor: not-allowed;
+}
+
+.input-area button:hover:not(:disabled) {
+  background-color: #1976d2;
 }
 
 .App-link {
@@ -34,5 +200,24 @@
   }
   to {
     transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 600px) {
+  .App {
+    padding: 10px;
+  }
+  
+  .server-config, .server-inputs {
+    flex-direction: column;
+    gap: 10px;
+  }
+  
+  .server-inputs label {
+    width: 100%;
+  }
+  
+  .server-inputs input {
+    width: 100%;
   }
 }
