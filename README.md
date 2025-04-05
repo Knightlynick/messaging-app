@@ -29,16 +29,8 @@ This is a simple guide to set up and run the Messaging-App project on a Linux en
    ```
    This set up the backend, install any dependencies onto the pc, as well as get the build folder set up.  Make changes inside the src folder inside of server, not build
 
-3. Build Backend.
-    ```bash
-    cd build
-    cmake --build .
-    ```
-
-    Make sure you are in the build folder, this will build the backend
-
-4. Run Backend
-    cd ..
+3. Build and Run backend
+    cd server
     ./start.sh
 
     This will start the backend on a local ip, on the port 12345

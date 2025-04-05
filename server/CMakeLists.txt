@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.15)
+cmake_minimum_required(VERSION 3.10)
 project(MessagingApp)
 
 # Use C++17 standard.
@@ -11,5 +11,3 @@ find_package(fmt REQUIRED)
 
 # Add the source directory.
 add_subdirectory(src)
-
-# (Optionally) set up output directories, compiler flags, etc.
