@@ -6,11 +6,25 @@ function Login({ onLogin }) {
   const [password, setPassword] = useState('');
   const navigate = useNavigate();
 
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
-    console.log("Logging in:", username, password);
-    onLogin(); // Mark user as authenticated
-    navigate('/chat'); // Redirect to chat page
+    try {
+      const response = await fetch('http://localhost:12345/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+      const data = await response.json();
+      if (response.ok) {
+        onLogin(); // Mark the user as authenticated.
+        navigate('/chat'); // Redirect to chat page.
+      } else {
+        alert(data.message || 'Login failed');
+      }
+    } catch (error) {
+      console.error('Login error:', error);
+      alert('Login error');
+    }
   };
 
   return (
@@ -23,8 +37,8 @@ function Login({ onLogin }) {
         <form onSubmit={handleLogin} style={formStyle}>
           <label>
             Username:
-            <input 
-              type="text" 
+            <input
+              type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               required
@@ -33,8 +47,8 @@ function Login({ onLogin }) {
           </label>
           <label>
             Password:
-            <input 
-              type="password" 
+            <input
+              type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
@@ -59,7 +73,7 @@ const containerStyle = {
   margin: '0 auto',
   padding: '20px',
   boxSizing: 'border-box',
-  fontFamily: "Arial, sans-serif"
+  fontFamily: "Arial, sans-serif",
 };
 
 const headerStyle = {
@@ -68,7 +82,7 @@ const headerStyle = {
   padding: '20px',
   display: 'flex',
   justifyContent: 'center',
-  alignItems: 'center'
+  alignItems: 'center',
 };
 
 const formContainerStyle = {
@@ -76,17 +90,17 @@ const formContainerStyle = {
   margin: '20px auto',
   padding: '20px',
   backgroundColor: '#f5f5f5',
-  borderRadius: '8px'
+  borderRadius: '8px',
 };
 
 const titleStyle = {
   textAlign: 'center',
-  marginBottom: '20px'
+  marginBottom: '20px',
 };
 
 const formStyle = {
   display: 'flex',
-  flexDirection: 'column'
+  flexDirection: 'column',
 };
 
 const inputStyle = {
@@ -94,7 +108,7 @@ const inputStyle = {
   marginBottom: '10px',
   border: '1px solid #ccc',
   borderRadius: '4px',
-  fontSize: '16px'
+  fontSize: '16px',
 };
 
 const buttonStyle = {
@@ -104,5 +118,5 @@ const buttonStyle = {
   border: 'none',
   borderRadius: '4px',
   cursor: 'pointer',
-  fontSize: '16px'
+  fontSize: '16px',
 };
