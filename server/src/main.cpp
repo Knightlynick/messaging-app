@@ -220,7 +220,7 @@ private:
                             fmt::format("{} has joined the chat", username_));
                         room_.broadcast(joinMsg, shared_from_this());
                     }
-                } else if (type == "message") {
+                } else if (type == "message" || type == "chat") {
                     // If a user sends a message but hasn't joined, return an error.
                     if (username_.empty()) {
                         std::string errorMsg = simple_json::make_message("error", "Join with a username first");
@@ -296,12 +296,14 @@ void ChatRoom::broadcast(const std::string& message, std::shared_ptr<ChatSession
     std::vector<std::shared_ptr<ChatSession>> actives;
     {
         std::lock_guard<std::mutex> lock(mtx_);
+        // Fix the iterator increment issue
         for (auto it = sessions_.begin(); it != sessions_.end();) {
-            if (auto s = it->lock())
+            if (auto s = it->lock()) {
                 actives.push_back(s);
-            else
+                ++it;
+            } else {
                 it = sessions_.erase(it);
-            ++it;
+            }
         }
     }
     // Log broadcast event.
