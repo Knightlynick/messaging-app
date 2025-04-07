@@ -1,67 +1,65 @@
 import React, { useEffect, useState, useRef } from 'react';
 import './App.css';
 
-function Chat() {
-  const [username, setUsername] = useState("");
+function Chat({ onLogout }) {
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState([]);
   const [connected, setConnected] = useState(false);
-  const [joined, setJoined] = useState(false);
   const socketRef = useRef(null);
   const messagesEndRef = useRef(null);
+  const username = localStorage.getItem('username') || "Anonymous";
 
-  // Auto-scroll to bottom when messages update
   useEffect(() => {
     if (messagesEndRef.current) {
       messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [messages]);
 
-  // Connect to WebSocket server
   useEffect(() => {
-    const socket = new WebSocket('ws://127.0.0.1:12345');
+    const socket = new WebSocket('ws://localhost:12345');
     socketRef.current = socket;
-
+  
     socket.onopen = () => {
+      console.log("WebSocket connected");
       setConnected(true);
-      setMessages((prev) => [...prev, { type: 'system', content: 'Connected to the server' }]);
+      const username = localStorage.getItem("username") || "Anonymous";
+      // Only send the join message when the connection is fully open.
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: "join", username }));
+      }
+      setMessages(prev => [...prev, { type: 'system', content: 'Connected to the server' }]);
     };
-
+  
     socket.onmessage = (event) => {
+      console.log("WebSocket message received", event.data);
       try {
         const data = JSON.parse(event.data);
-        setMessages((prev) => [...prev, data]);
+        setMessages(prev => [...prev, data]);
       } catch (e) {
-        setMessages((prev) => [...prev, { type: 'system', content: event.data }]);
+        setMessages(prev => [...prev, { type: 'system', content: event.data }]);
       }
     };
-
+  
     socket.onerror = (error) => {
       console.error("WebSocket error:", error);
-      setMessages((prev) => [...prev, { type: 'error', content: 'WebSocket error' }]);
+      setMessages(prev => [...prev, { type: 'error', content: 'WebSocket error' }]);
     };
-
+  
     socket.onclose = () => {
+      console.log("WebSocket closed");
       setConnected(false);
-      setJoined(false);
-      setMessages((prev) => [...prev, { type: 'system', content: 'Disconnected from the server' }]);
+      setMessages(prev => [...prev, { type: 'system', content: 'Disconnected from the server' }]);
     };
-
+  
     return () => {
-      socket.close();
+      // Make sure the socket is open before closing.
+      if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+        socket.close();
+      }
     };
   }, []);
+  
 
-  // Join the chat with username
-  const joinChat = () => {
-    if (username.trim() && socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-      const joinMsg = { type: 'join', username: username.trim() };
-      socketRef.current.send(JSON.stringify(joinMsg));
-      setJoined(true);
-    }
-  };
-
-  // Send a chat message
   const sendMessage = () => {
     if (message.trim() && socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
       const chatMsg = { type: 'chat', content: message.trim(), username };
@@ -72,11 +70,7 @@ function Chat() {
 
   const handleKeyPress = (e) => {
     if (e.key === 'Enter') {
-      if (!joined) {
-        joinChat();
-      } else {
-        sendMessage();
-      }
+      sendMessage();
     }
   };
 
@@ -108,11 +102,21 @@ function Chat() {
     }
   };
 
+  const handleLogout = () => {
+    if (socketRef.current) {
+      socketRef.current.close();
+    }
+    onLogout();
+  };
+
   return (
     <div className="App">
       <header className="App-header">
         <h1>Global Chat Room</h1>
-        <div className="connection-status">Status: {connected ? 'Connected' : 'Disconnected'}</div>
+        <div className="connection-status">
+          Status: {connected ? 'Connected' : 'Disconnected'}
+          <button onClick={handleLogout} className="logout-button">Logout</button>
+        </div>
       </header>
       
       <div className="messages-container">
@@ -122,45 +126,24 @@ function Chat() {
         </div>
       </div>
       
-      {!joined ? (
-        <div className="join-container">
-          <input
-            type="text"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            onKeyPress={handleKeyPress}
-            placeholder="Enter your username..."
-            disabled={!connected}
-            className="username-input"
-          />
-          <button 
-            onClick={joinChat} 
-            disabled={!connected || !username.trim()}
-            className="join-button"
-          >
-            Join Chat
-          </button>
-        </div>
-      ) : (
-        <div className="input-area">
-          <input
-            type="text"
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            onKeyPress={handleKeyPress}
-            placeholder="Type a message..."
-            disabled={!connected}
-            className="message-input"
-          />
-          <button 
-            onClick={sendMessage} 
-            disabled={!connected || !message.trim()}
-            className="send-button"
-          >
-            Send
-          </button>
-        </div>
-      )}
+      <div className="input-area">
+        <input
+          type="text"
+          value={message}
+          onChange={(e) => setMessage(e.target.value)}
+          onKeyDown={handleKeyPress}
+          placeholder="Type a message..."
+          disabled={!connected}
+          className="message-input"
+        />
+        <button 
+          onClick={sendMessage} 
+          disabled={!connected || !message.trim()}
+          className="send-button"
+        >
+          Send
+        </button>
+      </div>
     </div>
   );
 }

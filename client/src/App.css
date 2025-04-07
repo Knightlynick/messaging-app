@@ -4,130 +4,99 @@
   height: 100vh;
   max-width: 800px;
   margin: 0 auto;
-  font-family: Arial, sans-serif;
-}
-
-.App-logo {
-  height: 40vmin;
-  pointer-events: none;
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .App-logo {
-    animation: App-logo-spin infinite 20s linear;
-  }
+  background-color: #f9f9f9;
 }
 
 .App-header {
   background-color: #282c34;
   color: white;
-  padding: 20px;
+  padding: 15px;
+  text-align: center;
+  position: relative;
+}
+
+.connection-status {
+  font-size: 14px;
+  margin-top: 5px;
   display: flex;
   justify-content: space-between;
   align-items: center;
 }
 
-.App-header h1 {
-  margin: 0;
-  font-size: 24px;
-}
-
-.connection-status {
-  font-size: 14px;
-  color: #cccccc;
-}
-
-.connection-status::before {
-  content: '';
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  margin-right: 8px;
-  background-color: red;
-}
-
-.App-header .connection-status::before {
-  background-color: green;
+.logout-button {
+  background-color: #f44336;
+  color: white;
+  border: none;
+  padding: 5px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
 }
 
 .messages-container {
   flex: 1;
-  overflow: hidden;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  margin: 10px 0;
-  background-color: #f9f9f9;
+  overflow-y: auto;
+  padding: 15px;
+  background-color: white;
+  border-left: 1px solid #ddd;
+  border-right: 1px solid #ddd;
 }
 
 .messages {
-  height: 100%;
-  padding: 10px;
-  overflow-y: auto;
   display: flex;
   flex-direction: column;
+  gap: 10px;
 }
 
 .message {
-  margin-bottom: 8px;
   padding: 8px 12px;
   border-radius: 4px;
-  max-width: 80%;
+  background-color: #f0f0f0;
   word-break: break-word;
 }
 
 .system-message {
-  background-color: #efefef;
-  color: #666;
-  align-self: center;
-  font-style: italic;
+  background-color: #e3f2fd;
+  color: #1976d2;
 }
 
 .error-message {
-  background-color: #ffeeee;
-  color: #cc0000;
-  align-self: center;
+  background-color: #ffebee;
+  color: #d32f2f;
 }
 
 .chat-message {
-  background-color: #e1f3fb;
-  align-self: flex-start;
+  background-color: #e8f5e9;
+}
+
+.system-indicator,
+.error-indicator {
+  font-weight: bold;
 }
 
 .username {
   font-weight: bold;
-  margin-right: 5px;
-  color: #0066cc;
+  color: #2e7d32;
 }
 
-.system-indicator {
-  font-weight: bold;
-  color: #666;
-}
-
-.error-indicator {
-  font-weight: bold;
-  color: #cc0000;
-}
-
-.input-area, .join-container {
+.input-area {
   display: flex;
-  padding: 10px;
-  background-color: #f0f0f0;
+  padding: 15px;
+  background-color: white;
   border-top: 1px solid #ddd;
 }
 
-input {
+.message-input {
   flex: 1;
   padding: 10px;
-  border: 1px solid #ccc;
+  border: 1px solid #ddd;
   border-radius: 4px;
   font-size: 16px;
 }
 
-button {
-  padding: 10px 20px;
+.send-button {
   margin-left: 10px;
+  padding: 10px 20px;
   background-color: #4caf50;
   color: white;
   border: none;
@@ -136,47 +105,23 @@ button {
   font-size: 16px;
 }
 
-button:disabled {
+.send-button:disabled {
   background-color: #cccccc;
   cursor: not-allowed;
 }
 
-.username-input {
-  flex: 2;
-}
-
-.join-button {
-  background-color: #2196f3;
-}
-
-.App-link {
-  color: #61dafb;
-}
-
-@keyframes App-logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
+/* Responsive design */
 @media (max-width: 600px) {
   .App {
-    padding: 10px;
+    max-width: 100%;
   }
   
-  .server-config, .server-inputs {
+  .input-area {
     flex-direction: column;
-    gap: 10px;
   }
   
-  .server-inputs label {
-    width: 100%;
-  }
-  
-  .server-inputs input {
-    width: 100%;
+  .send-button {
+    margin-left: 0;
+    margin-top: 10px;
   }
 }
