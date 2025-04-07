@@ -1,35 +1,39 @@
-import React, { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+/*
+Register.js
+This file implements the registration form for new users. It validates input, sends a request to register a new user, and displays success or error messages
+*/
+import React, { useState } from 'react'
+import { useNavigate, Link } from 'react-router-dom'
 
 function Register() {
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const navigate = useNavigate();
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [error, setError] = useState('')
+  const [success, setSuccess] = useState(false)
+  const [isLoading, setIsLoading] = useState(false)
+  const navigate = useNavigate()
 
   const handleRegister = async (e) => {
-    e.preventDefault();
-    setError('');
+    e.preventDefault()
+    setError('')
     
     if (password !== confirmPassword) {
-      setError("Passwords do not match!");
-      return;
+      setError("Passwords do not match!")
+      return
     }
 
     if (password.length < 6) {
-      setError("Password must be at least 6 characters long");
-      return;
+      setError("Password must be at least 6 characters long")
+      return
     }
 
-    setIsLoading(true);
+    setIsLoading(true)
     try {
       const response = await fetch('http://localhost:8080/auth', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           type: 'auth',
@@ -38,21 +42,21 @@ function Register() {
           password
         }),
         credentials: 'include'
-      });
+      })
       
-      const data = await response.json();
+      const data = await response.json()
       if (data.status === 'success') {
-        setSuccess(true);
-        setTimeout(() => navigate('/login'), 2000);
+        setSuccess(true)
+        setTimeout(() => navigate('/login'), 2000)
       } else {
-        setError(data.message || 'Registration failed. Please try again.');
+        setError(data.message || 'Registration failed. Please try again!')
       }
     } catch (err) {
-      setError('Connection error. Please try again later.');
+      setError('Connection error. Please try again later!')
     } finally {
-      setIsLoading(false);
+      setIsLoading(false)
     }
-  };
+  }
 
   return (
     <div style={containerStyle}>
@@ -105,11 +109,11 @@ function Register() {
           </button>
         </form>
         <p style={{ textAlign: 'center', marginTop: '20px' }}>
-          Already have an account? <Link to="/login" style={linkStyle}>Login here</Link>.
+          Already have an account? <Link to="/login" style={linkStyle}>Login here</Link>
         </p>
       </div>
     </div>
-  );
+  )
 }
 
 const containerStyle = {
@@ -118,7 +122,7 @@ const containerStyle = {
   padding: '20px',
   boxSizing: 'border-box',
   fontFamily: "Arial, sans-serif"
-};
+}
 
 const headerStyle = {
   backgroundColor: '#282c34',
@@ -129,7 +133,7 @@ const headerStyle = {
   alignItems: 'center',
   borderRadius: '8px 8px 0 0',
   marginBottom: '20px'
-};
+}
 
 const formContainerStyle = {
   maxWidth: '400px',
@@ -138,18 +142,18 @@ const formContainerStyle = {
   backgroundColor: '#f5f5f5',
   borderRadius: '8px',
   boxShadow: '0 2px 10px rgba(0,0,0,0.1)'
-};
+}
 
 const titleStyle = {
   textAlign: 'center',
   marginBottom: '20px',
   color: '#333'
-};
+}
 
 const formStyle = {
   display: 'flex',
   flexDirection: 'column'
-};
+}
 
 const labelStyle = {
   marginBottom: '15px',
@@ -157,7 +161,7 @@ const labelStyle = {
   flexDirection: 'column',
   fontSize: '14px',
   color: '#555'
-};
+}
 
 const inputStyle = {
   padding: '12px',
@@ -166,8 +170,8 @@ const inputStyle = {
   borderRadius: '4px',
   fontSize: '16px',
   outline: 'none',
-  transition: 'border 0.3s',
-};
+  transition: 'border 0.3s'
+}
 
 const buttonStyle = {
   padding: '12px 20px',
@@ -178,8 +182,8 @@ const buttonStyle = {
   cursor: 'pointer',
   fontSize: '16px',
   marginTop: '10px',
-  transition: 'background-color 0.3s',
-};
+  transition: 'background-color 0.3s'
+}
 
 const errorStyle = {
   color: '#d32f2f',
@@ -188,7 +192,7 @@ const errorStyle = {
   padding: '10px',
   backgroundColor: '#ffebee',
   borderRadius: '4px'
-};
+}
 
 const successStyle = {
   color: '#388e3c',
@@ -197,12 +201,12 @@ const successStyle = {
   padding: '10px',
   backgroundColor: '#e8f5e9',
   borderRadius: '4px'
-};
+}
 
 const linkStyle = {
   color: '#4caf50',
   textDecoration: 'none',
   fontWeight: 'bold'
-};
+}
 
-export default Register;
+export default Register
