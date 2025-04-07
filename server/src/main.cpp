@@ -18,12 +18,86 @@
 #include <iomanip>
 #include <cstdlib>
 #include <functional>
+#include <queue>
+
 
 namespace beast = boost::beast;
 namespace websocket = beast::websocket;
 namespace http = beast::http;
 namespace net = boost::asio;
 using tcp = net::ip::tcp;
+
+enum class Priority {
+    High = 0,
+    Normal = 1,
+    Low = 2
+};
+
+struct ScheduledTask {
+    Priority priority;
+    std::function<void()> func;
+    uint64_t seq;
+};
+
+struct CompareTask {
+    bool operator()(const ScheduledTask& a, const ScheduledTask& b) const {
+        // Lower priority value means higher priority.
+        if (a.priority == b.priority)
+            return a.seq > b.seq; // Maintain FIFO order if equal priority.
+        return static_cast<int>(a.priority) > static_cast<int>(b.priority);
+    }
+};
+
+class PriorityTaskScheduler {
+private:
+    std::priority_queue<ScheduledTask, std::vector<ScheduledTask>, CompareTask> tasks_;
+    std::mutex mtx_;
+    std::condition_variable cv_;
+    std::atomic<bool> stop_;
+    uint64_t seqCounter_;
+    net::io_context& ioc_;
+    std::thread workerThread_;
+public:
+    PriorityTaskScheduler(net::io_context& ioc)
+        : stop_(false), seqCounter_(0), ioc_(ioc) {
+        workerThread_ = std::thread([this]() { this->run(); });
+    }
+    ~PriorityTaskScheduler() {
+        {
+            std::unique_lock<std::mutex> lock(mtx_);
+            stop_ = true;
+        }
+        cv_.notify_all();
+        if (workerThread_.joinable())
+            workerThread_.join();
+    }
+    void scheduleTask(Priority prio, std::function<void()> task) {
+        {
+            std::lock_guard<std::mutex> lock(mtx_);
+            tasks_.push(ScheduledTask{prio, task, seqCounter_++});
+        }
+        cv_.notify_one();
+    }
+private:
+    void run() {
+        while (!stop_) {
+            ScheduledTask task;
+            {
+                std::unique_lock<std::mutex> lock(mtx_);
+                cv_.wait(lock, [this]() { return stop_ || !tasks_.empty(); });
+                if (stop_ && tasks_.empty())
+                    break;
+                task = tasks_.top();
+                tasks_.pop();
+            }
+            // Post the task to the io_context so that it is executed in the thread pool.
+            net::post(ioc_, task.func);
+        }
+    }
+};
+
+std::shared_ptr<PriorityTaskScheduler> g_scheduler;
+
 
 //------------------------------------------------------------------------------
 // Simple JSON utilities.
@@ -119,7 +193,7 @@ std::string sha256(const std::string& str) {
 class UserDatabase {
 private:
     sqlite3* db_;
-    std::mutex mtx_;
+    std::timed_mutex mtx_;
 public:
     UserDatabase() : db_(nullptr) {
         int rc = sqlite3_open("chat_users.db", &db_);
@@ -127,12 +201,15 @@ public:
             std::cerr << "[ERROR] Can't open database: " << sqlite3_errmsg(db_) << "\n";
             return;
         }
+        // Enable WAL mode to improve concurrency.
+        sqlite3_exec(db_, "PRAGMA journal_mode=WAL;", nullptr, nullptr, nullptr);
+
         const char* sql = "CREATE TABLE IF NOT EXISTS users ("
-                          "id INTEGER PRIMARY KEY AUTOINCREMENT,"
-                          "username TEXT UNIQUE NOT NULL,"
-                          "password_hash TEXT NOT NULL,"
-                          "salt TEXT NOT NULL,"
-                          "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);";
+                        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                        "username TEXT UNIQUE NOT NULL,"
+                        "password_hash TEXT NOT NULL,"
+                        "salt TEXT NOT NULL,"
+                        "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);";
         char* errMsg = nullptr;
         rc = sqlite3_exec(db_, sql, nullptr, nullptr, &errMsg);
         if (rc != SQLITE_OK) {
@@ -140,13 +217,21 @@ public:
             sqlite3_free(errMsg);
         }
     }
+
     ~UserDatabase() {
         if (db_) {
             sqlite3_close(db_);
         }
     }
     bool registerUser(const std::string& username, const std::string& password) {
-        std::lock_guard<std::mutex> lock(mtx_);
+        // Try to acquire the lock for 100 milliseconds.
+        std::unique_lock<std::timed_mutex> lock(mtx_, std::chrono::milliseconds(100));
+        if (!lock.owns_lock()) {
+            std::cerr << "[ERROR] registerUser: Failed to acquire lock (possible deadlock)" << "\n";
+            return false;
+        }
+        
+        // Begin transaction and perform operations as before.
         const char* checkSql = "SELECT username FROM users WHERE username = ?;";
         sqlite3_stmt* checkStmt;
         if (sqlite3_prepare_v2(db_, checkSql, -1, &checkStmt, nullptr) != SQLITE_OK) {
@@ -159,9 +244,12 @@ public:
             return false;
         }
         sqlite3_finalize(checkStmt);
+        
+        // Compute salt and hash.
         std::string salt = std::to_string(rand());
         std::string saltedPassword = password + salt;
         std::string hash = sha256(saltedPassword);
+        
         const char* insertSql = "INSERT INTO users (username, password_hash, salt) VALUES (?, ?, ?);";
         sqlite3_stmt* insertStmt;
         if (sqlite3_prepare_v2(db_, insertSql, -1, &insertStmt, nullptr) != SQLITE_OK) {
@@ -175,8 +263,15 @@ public:
         sqlite3_finalize(insertStmt);
         return success;
     }
+    
+    
     bool authenticateUser(const std::string& username, const std::string& password) {
-        std::lock_guard<std::mutex> lock(mtx_);
+        std::unique_lock<std::timed_mutex> lock(mtx_, std::chrono::milliseconds(100));
+        if (!lock.owns_lock()) {
+            std::cerr << "[ERROR] authenticateUser: Failed to acquire lock (possible deadlock)" << "\n";
+            return false;
+        }
+        
         const char* sql = "SELECT password_hash, salt FROM users WHERE username = ?;";
         sqlite3_stmt* stmt;
         if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
@@ -195,6 +290,7 @@ public:
         sqlite3_finalize(stmt);
         return authenticated;
     }
+    
 };
 
 UserDatabase userDB;
@@ -204,7 +300,7 @@ UserDatabase userDB;
 class ChatSession;
 class ChatRoom {
 private:
-    std::mutex mtx_;
+    std::timed_mutex mtx_;
     std::vector<std::weak_ptr<ChatSession>> sessions_;
 public:
     void join(std::shared_ptr<ChatSession> session);
@@ -390,13 +486,21 @@ private:
 };
 
 void ChatRoom::join(std::shared_ptr<ChatSession> session) {
-    std::lock_guard<std::mutex> lock(mtx_);
+    std::unique_lock<std::timed_mutex> lock(mtx_, std::chrono::milliseconds(100));
+    if (!lock.owns_lock()) {
+        std::cerr << "[ERROR] ChatRoom::join: Failed to acquire lock\n";
+        return;
+    }
     sessions_.push_back(session);
     std::cout << "[INFO] ChatRoom: New session joined. Total sessions: " << sessions_.size() << "\n";
 }
 
 void ChatRoom::leave(std::shared_ptr<ChatSession> session) {
-    std::lock_guard<std::mutex> lock(mtx_);
+    std::unique_lock<std::timed_mutex> lock(mtx_, std::chrono::milliseconds(100));
+    if (!lock.owns_lock()) {
+        std::cerr << "[ERROR] ChatRoom::leave: Failed to acquire lock\n";
+        return;
+    }
     sessions_.erase(std::remove_if(sessions_.begin(), sessions_.end(),
         [&](const std::weak_ptr<ChatSession>& ws) {
             auto s = ws.lock();
@@ -405,10 +509,15 @@ void ChatRoom::leave(std::shared_ptr<ChatSession> session) {
     std::cout << "[INFO] ChatRoom: Session left. Remaining sessions: " << sessions_.size() << "\n";
 }
 
+
 void ChatRoom::broadcast(const std::string& message, std::shared_ptr<ChatSession> /*sender*/) {
     std::vector<std::shared_ptr<ChatSession>> actives;
     {
-        std::lock_guard<std::mutex> lock(mtx_);
+        std::unique_lock<std::timed_mutex> lock(mtx_, std::chrono::milliseconds(100));
+        if (!lock.owns_lock()) {
+            std::cerr << "[ERROR] ChatRoom::broadcast: Failed to acquire lock\n";
+            return;
+        }
         for (auto it = sessions_.begin(); it != sessions_.end();) {
             if (auto s = it->lock()) {
                 actives.push_back(s);
@@ -419,11 +528,12 @@ void ChatRoom::broadcast(const std::string& message, std::shared_ptr<ChatSession
         }
     }
     std::cout << "[INFO] Broadcasting message to " << actives.size() << " sessions.\n";
-    // Send to every connected session.
     for (auto& session : actives) {
         session->send(message);
     }
 }
+
+
 
 
 //------------------------------------------------------------------------------
@@ -679,8 +789,12 @@ private:
 int main() {
     try {
         net::io_context ioc;
-        // Create a work guard to prevent io_context from running out of work.
+        // Create a work guard to keep io_context alive.
         auto work_guard = net::make_work_guard(ioc);
+        
+        // Initialize the global scheduler.
+        g_scheduler = std::make_shared<PriorityTaskScheduler>(ioc);
+        
         ChatRoom room;
         auto authListener = std::make_shared<AuthListener>(
             ioc, tcp::endpoint(net::ip::make_address("0.0.0.0"), 8080));
@@ -705,3 +819,4 @@ int main() {
     }
     return EXIT_SUCCESS;
 }
+
