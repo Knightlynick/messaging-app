@@ -1,3 +1,11 @@
+/*
+main.cpp
+This file implements the backend server for a messaging app using Boost.Asio and Boost.Beast.
+It provides an HTTP endpoint (/auth) for user authentication/registration and a WebSocket endpoint for chat.
+User management is handled via SQLite with transactions (ACID properties) and concurrency is managed using a thread pool.
+The app also includes a custom priority task scheduler for prioritizing tasks and uses timed_mutexes to help prevent deadlocks
+*/
+
 #include <boost/beast/core.hpp>
 #include <boost/beast/websocket.hpp>
 #include <boost/beast/http.hpp>
@@ -18,6 +26,9 @@
 #include <iomanip>
 #include <cstdlib>
 #include <functional>
+#include <queue>
+#include <condition_variable>
+#include <chrono>
 
 namespace beast = boost::beast;
 namespace websocket = beast::websocket;
@@ -25,9 +36,109 @@ namespace http = beast::http;
 namespace net = boost::asio;
 using tcp = net::ip::tcp;
 
-//------------------------------------------------------------------------------
-// Simple JSON utilities.
+/*
+Enum for task priorities used in the custom scheduler
+*/
+enum class Priority {
+    High = 0,
+    Normal = 1,
+    Low = 2
+};
+
+/*
+Structure representing a scheduled task.
+It contains a priority, a function to execute, and a sequence number for FIFO ordering.
+*/
+struct ScheduledTask {
+    Priority priority;
+    std::function<void()> func;
+    uint64_t seq;
+};
+
+/*
+Comparator for ScheduledTask that orders tasks by priority (lower numeric value is higher priority)
+and uses the sequence number to preserve FIFO order for tasks with equal priority
+*/
+struct CompareTask {
+    bool operator()(const ScheduledTask& a, const ScheduledTask& b) const {
+        if (a.priority == b.priority)
+            return a.seq > b.seq;
+        return static_cast<int>(a.priority) > static_cast<int>(b.priority);
+    }
+};
+
+/*
+PriorityTaskScheduler schedules tasks based on priority. It maintains a priority queue of tasks
+and runs a worker thread that waits for tasks and posts them to the io_context.
+*/
+class PriorityTaskScheduler {
+private:
+    std::priority_queue<ScheduledTask, std::vector<ScheduledTask>, CompareTask> tasks_;
+    std::mutex mtx_;
+    std::condition_variable cv_;
+    std::atomic<bool> stop_;
+    uint64_t seqCounter_;
+    net::io_context& ioc_;
+    std::thread workerThread_;
+public:
+    /*
+    Constructor that initializes the scheduler and starts the worker thread
+    */
+    PriorityTaskScheduler(net::io_context& ioc)
+        : stop_(false), seqCounter_(0), ioc_(ioc) {
+        workerThread_ = std::thread([this]() { this->run(); });
+    }
+    /*
+    Destructor that signals the worker thread to stop and joins it
+    */
+    ~PriorityTaskScheduler() {
+        {
+            std::lock_guard<std::mutex> lock(mtx_);
+            stop_ = true;
+        }
+        cv_.notify_all();
+        if (workerThread_.joinable())
+            workerThread_.join();
+    }
+    /*
+    Schedules a task to be executed with the specified priority
+    */
+    void scheduleTask(Priority prio, std::function<void()> task) {
+        {
+            std::lock_guard<std::mutex> lock(mtx_);
+            tasks_.push(ScheduledTask{prio, task, seqCounter_++});
+        }
+        cv_.notify_one();
+    }
+private:
+    /*
+    Worker thread function that waits for tasks and posts them to the io_context
+    */
+    void run() {
+        while (!stop_) {
+            ScheduledTask task;
+            {
+                std::unique_lock<std::mutex> lock(mtx_);
+                cv_.wait(lock, [this]() { return stop_ || !tasks_.empty(); });
+                if (stop_ && tasks_.empty())
+                    break;
+                task = tasks_.top();
+                tasks_.pop();
+            }
+            net::post(ioc_, task.func);
+        }
+    }
+};
+
+std::shared_ptr<PriorityTaskScheduler> g_scheduler;  // Global scheduler instance
+
+/*
+JSON utility functions for escaping strings and constructing JSON messages
+*/
 namespace simple_json {
+    /*
+    Escapes special characters in a string for JSON
+    */
     std::string escape_string(const std::string& s) {
         std::ostringstream o;
         for (auto c : s) {
@@ -50,21 +161,32 @@ namespace simple_json {
         }
         return o.str();
     }
+    /*
+    Constructs a JSON message with a given type and content
+    */
     std::string make_message(const std::string& type, const std::string& content) {
         return fmt::format("{{\"type\":\"{}\",\"content\":\"{}\"}}", type, escape_string(content));
     }
+    /*
+    Constructs a JSON chat message with username and content
+    */
     std::string make_chat_message(const std::string& username, const std::string& content) {
         return fmt::format("{{\"type\":\"chat\",\"username\":\"{}\",\"content\":\"{}\"}}",
                            escape_string(username), escape_string(content));
     }
+    /*
+    Constructs a JSON authentication response with status and message
+    */
     std::string make_auth_response(bool success, const std::string& message = "") {
         return fmt::format("{{\"type\":\"auth\",\"status\":\"{}\",\"message\":\"{}\"}}",
                            success ? "success" : "failure", escape_string(message));
     }
 }
 
+/*
+A simple JSON parser that extracts the first occurrence of "type", "username", and "content"
+*/
 namespace simple_json {
-    // A very simplistic JSON parser that extracts the first occurrence of the keys "type", "username", and "content".
     bool parse_message(const std::string &json, std::string &type, std::string &username, std::string &content) {
         auto findKey = [&](const std::string &key) -> std::string {
             std::string pattern = "\"" + key + "\":\"";
@@ -80,13 +202,13 @@ namespace simple_json {
         type = findKey("type");
         username = findKey("username");
         content = findKey("content");
-        return !type.empty();  // if "type" is found, assume parsing was successful
+        return !type.empty();
     }
 }
 
-
-//------------------------------------------------------------------------------
-// SHA-256 function using OpenSSL.
+/*
+Computes the SHA-256 hash of a given string using OpenSSL
+*/
 std::string sha256(const std::string& str) {
     EVP_MD_CTX* context = EVP_MD_CTX_new();
     if (!context) {
@@ -114,19 +236,25 @@ std::string sha256(const std::string& str) {
     return ss.str();
 }
 
-//------------------------------------------------------------------------------
-// User Database using SQLite.
+/*
+UserDatabase manages user registration and authentication using SQLite.
+It uses a timed_mutex to prevent deadlocks and enables WAL mode for better concurrency.
+*/
 class UserDatabase {
 private:
     sqlite3* db_;
-    std::mutex mtx_;
+    std::timed_mutex mtx_;
 public:
+    /*
+    Constructor opens the database and creates the users table if it does not exist
+    */
     UserDatabase() : db_(nullptr) {
         int rc = sqlite3_open("chat_users.db", &db_);
         if (rc != SQLITE_OK) {
             std::cerr << "[ERROR] Can't open database: " << sqlite3_errmsg(db_) << "\n";
             return;
         }
+        sqlite3_exec(db_, "PRAGMA journal_mode=WAL;", nullptr, nullptr, nullptr);
         const char* sql = "CREATE TABLE IF NOT EXISTS users ("
                           "id INTEGER PRIMARY KEY AUTOINCREMENT,"
                           "username TEXT UNIQUE NOT NULL,"
@@ -140,13 +268,24 @@ public:
             sqlite3_free(errMsg);
         }
     }
+    /*
+    Destructor closes the database connection
+    */
     ~UserDatabase() {
         if (db_) {
             sqlite3_close(db_);
         }
     }
+    /*
+    Registers a user by inserting username, salted and hashed password into the database.
+    Returns true if registration is successful.
+    */
     bool registerUser(const std::string& username, const std::string& password) {
-        std::lock_guard<std::mutex> lock(mtx_);
+        std::unique_lock<std::timed_mutex> lock(mtx_, std::chrono::milliseconds(100));
+        if (!lock.owns_lock()) {
+            std::cerr << "[ERROR] registerUser: Failed to acquire lock (possible deadlock)" << "\n";
+            return false;
+        }
         const char* checkSql = "SELECT username FROM users WHERE username = ?;";
         sqlite3_stmt* checkStmt;
         if (sqlite3_prepare_v2(db_, checkSql, -1, &checkStmt, nullptr) != SQLITE_OK) {
@@ -175,8 +314,16 @@ public:
         sqlite3_finalize(insertStmt);
         return success;
     }
+    /*
+    Authenticates a user by comparing the provided password (after salting and hashing) with the stored hash.
+    Returns true if the authentication is successful.
+    */
     bool authenticateUser(const std::string& username, const std::string& password) {
-        std::lock_guard<std::mutex> lock(mtx_);
+        std::unique_lock<std::timed_mutex> lock(mtx_, std::chrono::milliseconds(100));
+        if (!lock.owns_lock()) {
+            std::cerr << "[ERROR] authenticateUser: Failed to acquire lock (possible deadlock)" << "\n";
+            return false;
+        }
         const char* sql = "SELECT password_hash, salt FROM users WHERE username = ?;";
         sqlite3_stmt* stmt;
         if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
@@ -199,12 +346,18 @@ public:
 
 UserDatabase userDB;
 
-//------------------------------------------------------------------------------
-// Chat Room and Chat Session for WebSocket chat.
+// Forward declaration of ChatSession so that ChatRoom can reference it
 class ChatSession;
+
+/*
+ChatRoom manages the chat sessions.
+It allows sessions to join, leave, and broadcasts messages to all sessions.
+A timed_mutex is used to prevent deadlocks.
+Member function definitions for join, leave, and broadcast are provided after the full ChatSession definition.
+*/
 class ChatRoom {
 private:
-    std::mutex mtx_;
+    std::timed_mutex mtx_;
     std::vector<std::weak_ptr<ChatSession>> sessions_;
 public:
     void join(std::shared_ptr<ChatSession> session);
@@ -212,6 +365,11 @@ public:
     void broadcast(const std::string& message, std::shared_ptr<ChatSession> sender);
 };
 
+/*
+ChatSession represents a WebSocket connection with a chat client.
+It handles receiving, processing, and sending messages.
+It also informs the ChatRoom when a user joins or leaves.
+*/
 class ChatSession : public std::enable_shared_from_this<ChatSession> {
 private:
     websocket::stream<beast::tcp_stream> ws_;
@@ -220,8 +378,14 @@ private:
     std::string username_;
     std::atomic<bool> closed_{false};
 public:
+    /*
+    Constructor that initializes the session with a socket and a reference to the ChatRoom
+    */
     ChatSession(tcp::socket&& socket, ChatRoom& room)
         : ws_(std::move(socket)), room_(room) {}
+    /*
+    Starts the WebSocket session by setting options and accepting the connection
+    */
     void start() {
         try {
             ws_.set_option(websocket::stream_base::timeout::suggested(beast::role_type::server));
@@ -237,7 +401,7 @@ public:
             ws_.async_accept([self = shared_from_this()](beast::error_code ec) {
                 try {
                     if (!ec) {
-                        std::cout << "[INFO] WebSocket accepted from a client.\n";
+                        std::cout << "[INFO] WebSocket accepted from a client" << "\n";
                         self->readMessage();
                     } else {
                         std::cerr << "[ERROR] Accept error: " << ec.message() << "\n";
@@ -250,6 +414,9 @@ public:
             std::cerr << "[EXCEPTION] In ChatSession::start: " << e.what() << "\n";
         }
     }
+    /*
+    Sends a message asynchronously to the client
+    */
     void send(const std::string& message) {
         if (closed_) return;
         net::post(ws_.get_executor(), [self = shared_from_this(), message]() {
@@ -261,12 +428,21 @@ public:
             }
         });
     }
+    /*
+    Returns the username associated with this session
+    */
     std::string get_username() const { return username_; }
 private:
+    /*
+    Low-level send implementation over the WebSocket
+    */
     void sendImpl(const std::string& message) {
         ws_.write(net::buffer(message));
         std::cout << "[INFO] Sent message: " << message << "\n";
     }
+    /*
+    Asynchronously reads messages from the WebSocket and processes them
+    */
     void readMessage() {
         ws_.async_read(buffer_, [self = shared_from_this()](beast::error_code ec, std::size_t) {
             try {
@@ -286,15 +462,16 @@ private:
             }
         });
     }
+    /*
+    Processes an incoming message. Handles join, auth, chat, and plain text messages.
+    */
     void handleMessage(const std::string& message) {
         try {
-            // Try to parse the message as JSON.
             std::string type, userField, content;
             bool parsed = simple_json::parse_message(message, type, userField, content);
     
             if (parsed) {
                 if (type == "join") {
-                    // Instead of relying on the parser, explicitly extract the username.
                     size_t pos = message.find("\"username\":\"");
                     if (pos != std::string::npos) {
                         pos += strlen("\"username\":\"");
@@ -306,7 +483,7 @@ private:
                     }
                     if (!username_.empty()) {
                         room_.join(shared_from_this());
-                        std::cout << "[INFO] User '" << username_ << "' joined the chat.\n";
+                        std::cout << "[INFO] User '" << username_ << "' joined the chat" << "\n";
                         std::string joinMsg = simple_json::make_message("system",
                             fmt::format("{} has joined the chat", username_));
                         room_.broadcast(joinMsg, shared_from_this());
@@ -315,7 +492,6 @@ private:
                     }
                 }
                 else if (type == "auth") {
-                    // Process auth message. For example, if the content holds the login/register info:
                     std::istringstream iss(content);
                     std::string action, user, password;
                     iss >> action >> user >> password;
@@ -348,19 +524,16 @@ private:
                     room_.broadcast(chatMsg, shared_from_this());
                 }
                 else {
-                    // If the type is not recognized, treat it as plain text chat if already joined.
                     if (!username_.empty()) {
                         std::string chatMsg = simple_json::make_chat_message(username_, message);
                         room_.broadcast(chatMsg, shared_from_this());
                     }
                 }
             } else {
-                // Not valid JSON: treat as plain text.
                 if (username_.empty() && !message.empty()) {
-                    // Auto-join with the provided message as username.
                     username_ = message;
                     room_.join(shared_from_this());
-                    std::cout << "[INFO] User '" << username_ << "' auto-joined the chat.\n";
+                    std::cout << "[INFO] User '" << username_ << "' auto-joined the chat" << "\n";
                     std::string joinMsg = simple_json::make_message("system",
                         fmt::format("{} has joined the chat", username_));
                     room_.broadcast(joinMsg, shared_from_this());
@@ -373,11 +546,14 @@ private:
             std::cerr << "[ERROR] Handle message error: " << e.what() << "\n";
         }
     }
-    
+    /*
+    Closes the WebSocket connection and notifies the ChatRoom that this session is disconnecting
+    */
     void close() {
-        if (closed_.exchange(true)) return;
+        if (closed_.exchange(true))
+            return;
         if (!username_.empty()) {
-            std::cout << "[INFO] User '" << username_ << "' is disconnecting.\n";
+            std::cout << "[INFO] User '" << username_ << "' is disconnecting" << "\n";
             std::string leaveMsg = simple_json::make_message("system",
                 fmt::format("{} has left the chat", username_));
             room_.broadcast(leaveMsg, shared_from_this());
@@ -389,14 +565,26 @@ private:
     }
 };
 
+/*
+Implementations of ChatRoom member functions that require the complete ChatSession type
+These are defined after the full ChatSession definition
+*/
 void ChatRoom::join(std::shared_ptr<ChatSession> session) {
-    std::lock_guard<std::mutex> lock(mtx_);
+    std::unique_lock<std::timed_mutex> lock(mtx_, std::chrono::milliseconds(100));
+    if (!lock.owns_lock()) {
+        std::cerr << "[ERROR] ChatRoom::join: Failed to acquire lock" << "\n";
+        return;
+    }
     sessions_.push_back(session);
     std::cout << "[INFO] ChatRoom: New session joined. Total sessions: " << sessions_.size() << "\n";
 }
 
 void ChatRoom::leave(std::shared_ptr<ChatSession> session) {
-    std::lock_guard<std::mutex> lock(mtx_);
+    std::unique_lock<std::timed_mutex> lock(mtx_, std::chrono::milliseconds(100));
+    if (!lock.owns_lock()) {
+        std::cerr << "[ERROR] ChatRoom::leave: Failed to acquire lock" << "\n";
+        return;
+    }
     sessions_.erase(std::remove_if(sessions_.begin(), sessions_.end(),
         [&](const std::weak_ptr<ChatSession>& ws) {
             auto s = ws.lock();
@@ -408,7 +596,11 @@ void ChatRoom::leave(std::shared_ptr<ChatSession> session) {
 void ChatRoom::broadcast(const std::string& message, std::shared_ptr<ChatSession> /*sender*/) {
     std::vector<std::shared_ptr<ChatSession>> actives;
     {
-        std::lock_guard<std::mutex> lock(mtx_);
+        std::unique_lock<std::timed_mutex> lock(mtx_, std::chrono::milliseconds(100));
+        if (!lock.owns_lock()) {
+            std::cerr << "[ERROR] ChatRoom::broadcast: Failed to acquire lock" << "\n";
+            return;
+        }
         for (auto it = sessions_.begin(); it != sessions_.end();) {
             if (auto s = it->lock()) {
                 actives.push_back(s);
@@ -418,28 +610,40 @@ void ChatRoom::broadcast(const std::string& message, std::shared_ptr<ChatSession
             }
         }
     }
-    std::cout << "[INFO] Broadcasting message to " << actives.size() << " sessions.\n";
-    // Send to every connected session.
+    std::cout << "[INFO] Broadcasting message to " << actives.size() << " sessions" << "\n";
     for (auto& session : actives) {
-        session->send(message);
+        // Schedule the send operation with normal priority
+        g_scheduler->scheduleTask(Priority::Normal, [session, message]() {
+            session->send(message);
+        });
     }
 }
 
-
-//------------------------------------------------------------------------------
-// HTTP Authentication Session for handling /auth requests.
+/*
+HttpAuthSession handles HTTP requests to the /auth endpoint for user login and registration.
+It reads the request, processes it, and writes a JSON response.
+*/
 class HttpAuthSession : public std::enable_shared_from_this<HttpAuthSession> {
 private:
     tcp::socket socket_;
     beast::flat_buffer buffer_;
     http::request<http::string_body> req_;
 public:
+    /*
+    Constructor that initializes the session with a socket
+    */
     HttpAuthSession(tcp::socket socket)
         : socket_(std::move(socket)) {}
+    /*
+    Starts processing the HTTP request
+    */
     void run() {
         doRead();
     }
 private:
+    /*
+    Asynchronously reads the HTTP request
+    */
     void doRead() {
         auto self = shared_from_this();
         http::async_read(socket_, buffer_, req_,
@@ -454,20 +658,17 @@ private:
                 }
             });
     }
+    /*
+    Handles the HTTP request for /auth by processing login or registration and sends a JSON response
+    */
     void handleRequest() {
-        // Allocate a response object on the heap.
         auto res = std::make_shared<http::response<http::string_body>>(http::status::ok, req_.version());
-        
-        // Clear default headers.
         res->base().clear();
-    
-        // Set minimal required headers explicitly.
         res->set(http::field::server, "MessagingApp");
         res->set(http::field::content_type, "application/json");
         res->set(http::field::access_control_allow_origin, "http://localhost:3000");
         res->set(http::field::access_control_allow_methods, "POST, GET, OPTIONS");
         res->set(http::field::access_control_allow_headers, "Content-Type");
-        // Set the credential header explicitly using its literal name.
         res->set("Access-Control-Allow-Credentials", "true");
     
         std::string response_body;
@@ -475,7 +676,6 @@ private:
             if (req_.method() == http::verb::options) {
                 response_body = "";
             } else if (req_.method() == http::verb::post) {
-                // Extract JSON fields from the request body.
                 std::string body = req_.body();
                 auto findValue = [&](const std::string & key) -> std::string {
                     std::string pattern = "\"" + key + "\":";
@@ -522,7 +722,7 @@ private:
             }
         } else {
             res->result(http::status::not_found);
-            response_body = "The resource was not found.";
+            response_body = "The resource was not found";
         }
     
         res->body() = response_body;
@@ -534,46 +734,23 @@ private:
                 try {
                     socket_.shutdown(tcp::socket::shutdown_send, ec);
                 } catch (...) {
-                    // Ignore shutdown errors.
+                    // Ignore shutdown errors
                 }
             });
     }
-    
-    
-    http::response<http::string_body> makeCorsResponse(http::status status, const std::string& bodyStr) {
-        http::response<http::string_body> res{status, req_.version()};
-        res.set(http::field::content_type, "application/json");
-        res.set(http::field::access_control_allow_origin, "http://localhost:3000");
-        res.set(http::field::access_control_allow_methods, "POST, GET, OPTIONS");
-        res.set(http::field::access_control_allow_headers, "Content-Type");
-        res.set(http::field::access_control_allow_credentials, "true");
-        res.body() = bodyStr;
-        res.prepare_payload();
-        return res;
-    }
-    http::response<http::string_body> badRequest(beast::string_view why) {
-        http::response<http::string_body> res{http::status::bad_request, req_.version()};
-        res.set(http::field::content_type, "text/plain");
-        res.body() = std::string(why);
-        res.prepare_payload();
-        return res;
-    }
-    http::response<http::string_body> notFound(beast::string_view target) {
-        http::response<http::string_body> res{http::status::not_found, req_.version()};
-        res.set(http::field::content_type, "text/plain");
-        res.body() = "The resource '" + std::string(target) + "' was not found.";
-        res.prepare_payload();
-        return res;
-    }
 };
 
-//------------------------------------------------------------------------------
-// AuthListener: dedicated HTTP listener for /auth on port 8080.
+/*
+AuthListener listens on the /auth HTTP endpoint and creates an HttpAuthSession for each connection
+*/
 class AuthListener : public std::enable_shared_from_this<AuthListener> {
 private:
     net::io_context& ioc_;
     tcp::acceptor acceptor_;
 public:
+    /*
+    Constructor that initializes the listener on the specified endpoint
+    */
     AuthListener(net::io_context& ioc, tcp::endpoint endpoint)
         : ioc_(ioc), acceptor_(ioc) {
         beast::error_code ec;
@@ -599,10 +776,16 @@ public:
         }
         std::cout << "[INFO] AuthListener initialized on " << endpoint << "\n";
     }
+    /*
+    Starts accepting connections on the /auth endpoint
+    */
     void run() {
         doAccept();
     }
 private:
+    /*
+    Asynchronously accepts a new connection and creates an HttpAuthSession
+    */
     void doAccept() {
         acceptor_.async_accept([self = shared_from_this()](beast::error_code ec, tcp::socket socket) {
             try {
@@ -620,14 +803,18 @@ private:
     }
 };
 
-//------------------------------------------------------------------------------
-// ChatListener: dedicated WebSocket listener for chat on port 12345.
+/*
+ChatListener listens on the WebSocket endpoint for chat and creates a ChatSession for each connection
+*/
 class ChatListener : public std::enable_shared_from_this<ChatListener> {
 private:
     net::io_context& ioc_;
     tcp::acceptor acceptor_;
     ChatRoom& room_;
 public:
+    /*
+    Constructor that initializes the chat listener on the specified endpoint and associates it with a ChatRoom
+    */
     ChatListener(net::io_context& ioc, tcp::endpoint endpoint, ChatRoom& room)
         : ioc_(ioc), acceptor_(ioc), room_(room) {
         beast::error_code ec;
@@ -653,10 +840,16 @@ public:
         }
         std::cout << "[INFO] ChatListener initialized on " << endpoint << "\n";
     }
+    /*
+    Starts accepting WebSocket chat connections
+    */
     void run() {
         doAccept();
     }
 private:
+    /*
+    Asynchronously accepts an incoming chat connection and creates a ChatSession
+    */
     void doAccept() {
         acceptor_.async_accept([self = shared_from_this()](beast::error_code ec, tcp::socket socket) {
             try {
@@ -674,13 +867,18 @@ private:
     }
 };
 
-//------------------------------------------------------------------------------
-// Main function.
+/*
+Main function sets up the io_context, global task scheduler, and listeners,
+then launches worker threads for concurrent processing
+*/
 int main() {
     try {
         net::io_context ioc;
-        // Create a work guard to prevent io_context from running out of work.
         auto work_guard = net::make_work_guard(ioc);
+        
+        // Initialize global priority task scheduler
+        g_scheduler = std::make_shared<PriorityTaskScheduler>(ioc);
+        
         ChatRoom room;
         auto authListener = std::make_shared<AuthListener>(
             ioc, tcp::endpoint(net::ip::make_address("0.0.0.0"), 8080));
@@ -688,13 +886,13 @@ int main() {
         auto chatListener = std::make_shared<ChatListener>(
             ioc, tcp::endpoint(net::ip::make_address("0.0.0.0"), 12345), room);
         chatListener->run();
-        std::cout << "[INFO] Auth server started on port 8080\n";
-        std::cout << "[INFO] Chat server started on port 12345\n";
+        std::cout << "[INFO] Auth server started on port 8080" << "\n";
+        std::cout << "[INFO] Chat server started on port 12345" << "\n";
         
-        // Launch worker threads.
         std::vector<std::thread> threads;
         unsigned thread_count = std::thread::hardware_concurrency();
-        if(thread_count == 0) thread_count = 1;
+        if (thread_count == 0)
+            thread_count = 1;
         for (unsigned i = 0; i < thread_count; ++i)
             threads.emplace_back([&ioc]{ ioc.run(); });
         for (auto& t : threads)
