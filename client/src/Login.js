@@ -4,6 +4,7 @@ This file implements the login form and sends an HTTP request to the /auth endpo
 */
 import React, { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
+import { API_BASE_URL } from './config' // <-- new import
 
 function Login({ onLogin }) {
   const [username, setUsername] = useState('')
@@ -18,7 +19,7 @@ function Login({ onLogin }) {
     setIsLoading(true)
 
     try {
-      const response = await fetch('http://localhost:8080/auth', {
+      const response = await fetch(`${API_BASE_URL}/auth`, { // <-- use API_BASE_URL
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'

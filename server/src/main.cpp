@@ -666,10 +666,18 @@ private:
         res->base().clear();
         res->set(http::field::server, "MessagingApp");
         res->set(http::field::content_type, "application/json");
-        res->set(http::field::access_control_allow_origin, "http://localhost:3000");
-        res->set(http::field::access_control_allow_methods, "POST, GET, OPTIONS");
-        res->set(http::field::access_control_allow_headers, "Content-Type");
-        res->set("Access-Control-Allow-Credentials", "true");
+        {
+            // Set CORS headers by echoing the request's Origin header if available. Otherwise, allow all origins.
+            auto it = req_.find(http::field::origin);
+            if (it != req_.end()) {
+                res->set(http::field::access_control_allow_origin, std::string(it->value()));
+            } else {
+                res->set(http::field::access_control_allow_origin, "*");
+            }
+            res->set(http::field::access_control_allow_methods, "POST, GET, OPTIONS");
+            res->set(http::field::access_control_allow_headers, "Content-Type");
+            res->set("Access-Control-Allow-Credentials", "true");
+        }
     
         std::string response_body;
         if (req_.target() == "/auth") {

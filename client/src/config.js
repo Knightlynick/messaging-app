@@ -1,0 +1,2 @@
+export const API_BASE_URL = 'https://4022-24-54-92-199.ngrok-free.app'  // Updated deployed URL for authentication service
+export const WS_BASE_URL = 'wss://efa3-24-54-92-199.ngrok-free.app'       // Updated deployed URL for chat service

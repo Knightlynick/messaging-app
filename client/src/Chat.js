@@ -4,6 +4,7 @@ This file implements the chat interface using a WebSocket. It connects to the ch
 */
 import React, { useEffect, useState, useRef } from 'react'
 import './App.css'
+import { WS_BASE_URL } from './config'
 
 function Chat({ onLogout }) {
   // Local state for current message, message history, and connection status
@@ -23,7 +24,8 @@ function Chat({ onLogout }) {
 
   // Create and manage the WebSocket connection and its events
   useEffect(() => {
-    const socket = new WebSocket('ws://localhost:12345')
+    // Create WebSocket connection using WS_BASE_URL
+    const socket = new WebSocket(`${WS_BASE_URL}`)
     socketRef.current = socket
   
     socket.onopen = () => {

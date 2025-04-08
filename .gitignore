@@ -24,7 +24,7 @@ server/vcpkg_installed/
 frontend/node_modules/
 frontend/.env
 client/package-lock.json
-
+client/build
 # Docker
 .env
 
