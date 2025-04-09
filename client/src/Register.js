@@ -4,6 +4,7 @@ This file implements the registration form for new users. It validates input, se
 */
 import React, { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
+import { API_BASE_URL } from './config'
 
 function Register() {
   const [username, setUsername] = useState('')
@@ -30,7 +31,7 @@ function Register() {
 
     setIsLoading(true)
     try {
-      const response = await fetch('http://localhost:8080/auth', {
+      const response = await fetch(`${API_BASE_URL}/auth`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
