@@ -277,8 +277,10 @@ public:
         }
     }
     /*
-    Registers a user by inserting username, salted and hashed password into the database.
-    Returns true if registration is successful.
+    This function registers a new user in the database as a transaction
+    It first begins a transaction, checks if the username already exists, and then
+    inserts the new user if not. In case of any error the transaction is rolled back
+    This implementation ensures atomicity and durability of the registration process
     */
     bool registerUser(const std::string& username, const std::string& password) {
         std::unique_lock<std::timed_mutex> lock(mtx_, std::chrono::milliseconds(100));
@@ -286,34 +288,68 @@ public:
             std::cerr << "[ERROR] registerUser: Failed to acquire lock (possible deadlock)" << "\n";
             return false;
         }
+
+        char* errMsg = nullptr;
+        // Begin the transaction
+        if (sqlite3_exec(db_, "BEGIN TRANSACTION;", nullptr, nullptr, &errMsg) != SQLITE_OK) {
+            std::cerr << "[ERROR] Failed to begin transaction: " << errMsg << "\n";
+            sqlite3_free(errMsg);
+            return false;
+        }
+
+        // Check if the username already exists
         const char* checkSql = "SELECT username FROM users WHERE username = ?;";
         sqlite3_stmt* checkStmt;
         if (sqlite3_prepare_v2(db_, checkSql, -1, &checkStmt, nullptr) != SQLITE_OK) {
             std::cerr << "[ERROR] Prepare failed: " << sqlite3_errmsg(db_) << "\n";
+            sqlite3_exec(db_, "ROLLBACK TRANSACTION;", nullptr, nullptr, &errMsg);
+            if (errMsg) sqlite3_free(errMsg);
             return false;
         }
         sqlite3_bind_text(checkStmt, 1, username.c_str(), -1, SQLITE_STATIC);
         if (sqlite3_step(checkStmt) == SQLITE_ROW) {
             sqlite3_finalize(checkStmt);
+            sqlite3_exec(db_, "ROLLBACK TRANSACTION;", nullptr, nullptr, &errMsg);
+            if (errMsg) sqlite3_free(errMsg);
             return false;
         }
         sqlite3_finalize(checkStmt);
+
+        // Compute salt and hash the salted password
         std::string salt = std::to_string(rand());
         std::string saltedPassword = password + salt;
         std::string hash = sha256(saltedPassword);
+
+        // Prepare the insert statement
         const char* insertSql = "INSERT INTO users (username, password_hash, salt) VALUES (?, ?, ?);";
         sqlite3_stmt* insertStmt;
         if (sqlite3_prepare_v2(db_, insertSql, -1, &insertStmt, nullptr) != SQLITE_OK) {
             std::cerr << "[ERROR] Prepare failed: " << sqlite3_errmsg(db_) << "\n";
+            sqlite3_exec(db_, "ROLLBACK TRANSACTION;", nullptr, nullptr, &errMsg);
+            if (errMsg) sqlite3_free(errMsg);
             return false;
         }
         sqlite3_bind_text(insertStmt, 1, username.c_str(), -1, SQLITE_STATIC);
         sqlite3_bind_text(insertStmt, 2, hash.c_str(), -1, SQLITE_STATIC);
         sqlite3_bind_text(insertStmt, 3, salt.c_str(), -1, SQLITE_STATIC);
-        bool success = sqlite3_step(insertStmt) == SQLITE_DONE;
+
+        bool success = (sqlite3_step(insertStmt) == SQLITE_DONE);
         sqlite3_finalize(insertStmt);
+
+        // Commit the transaction if the insert was successful, otherwise roll back
+        if (success) {
+            if (sqlite3_exec(db_, "COMMIT TRANSACTION;", nullptr, nullptr, &errMsg) != SQLITE_OK) {
+                std::cerr << "[ERROR] Failed to commit transaction: " << errMsg << "\n";
+                sqlite3_free(errMsg);
+                return false;
+            }
+        } else {
+            sqlite3_exec(db_, "ROLLBACK TRANSACTION;", nullptr, nullptr, &errMsg);
+            if (errMsg) sqlite3_free(errMsg);
+        }
         return success;
     }
+
     /*
     Authenticates a user by comparing the provided password (after salting and hashing) with the stored hash.
     Returns true if the authentication is successful.
